@@ -3,6 +3,10 @@ import 'package:GBPayUsers/core/vehicle_status_service.dart';
 import 'package:GBPayUsers/features/vehicles/model/vehicle_status_model.dart';
 import 'vehicle_detail_screen.dart';
 import 'package:intl/intl.dart';
+import 'vehicle_doc_scanner.dart';
+import 'package:GBPayUsers/core/dynamic_form_service.dart';
+import 'package:GBPayUsers/features/home/widgets/dynamic_form_screen.dart';
+import 'package:GBPayUsers/features/home/model/dynamic_form_model.dart';
 
 class VehiclesScreen extends StatefulWidget {
   final Color dynamicColor;
@@ -19,8 +23,15 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   final FocusNode _registrationFocusNode = FocusNode();
   final FocusNode _chassisFocusNode = FocusNode();
   bool _isLoading = false;
+  bool _hasSearched = false;
   List<VehicleStatusModel> _vehicles = [];
   String? _errorMessage;
+
+  final VehicleDocScanner _scanner = VehicleDocScanner();
+
+  // Target Form & Fee
+  static const int _targetFormId = 10;
+  static const String _targetFeeTitle = "C02638 Without Registration Other Than 2 Wheeler";
 
   @override
   void initState() {
@@ -38,14 +49,34 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
     super.dispose();
   }
 
+  // --------------------------------------------------------------
+  // SCAN & AUTO-FILL
+  // --------------------------------------------------------------
+  Future<void> _scanAndFill() async {
+    try {
+      final result = await _scanner.scanVehicleDoc(context);
+      if (result == null) return;
+
+      setState(() {
+        _registrationNumberController.text = result['registration_number'] ?? '';
+        _chassisNumberController.text = result['chassis_number'] ?? '';
+      });
+
+      await _fetchVehicleStatus();
+    } catch (e) {
+      _showSnackBar('Scan failed: $e', Colors.red);
+    }
+  }
+
+  // --------------------------------------------------------------
+  // FETCH VEHICLE STATUS
+  // --------------------------------------------------------------
   Future<void> _fetchVehicleStatus() async {
-    if (_registrationNumberController.text.isEmpty && _chassisNumberController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a registration or chassis number.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    final reg = _registrationNumberController.text.trim();
+    final chassis = _chassisNumberController.text.trim();
+
+    if (reg.isEmpty && chassis.isEmpty) {
+      _showSnackBar('Please enter a registration or chassis number.', Colors.red);
       return;
     }
 
@@ -53,16 +84,18 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
       _isLoading = true;
       _errorMessage = null;
       _vehicles = [];
+      _hasSearched = false;
     });
 
     final response = await VehicleStatusService.getVehicleStatus(
-      registrationNumber: _registrationNumberController.text,
-      chassisNumber: _chassisNumberController.text,
+      registrationNumber: reg,
+      chassisNumber: chassis,
       departmentCode: "23",
     );
 
     setState(() {
       _isLoading = false;
+      _hasSearched = true;
     });
 
     if (response['success'] == true) {
@@ -72,56 +105,137 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
             .toList();
       });
     } else {
-      setState(() {
-        _errorMessage = response['message'];
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorMessage ?? 'Failed to fetch vehicle status.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() => _errorMessage = response['message']);
+      _showSnackBar(_errorMessage ?? 'Failed to fetch vehicle status.', Colors.red);
     }
   }
 
-  Color _getTaxPaidUptoColor(String taxPaidUpto) {
-    try {
-      // Parse the date from API - try multiple formats
-      final DateFormat dateFormat = DateFormat('dd-MMM-yy');
-      DateTime taxPaidDate;
+  // --------------------------------------------------------------
+  // CLEAR SEARCH
+  // --------------------------------------------------------------
+  void _clearSearch() {
+    _registrationNumberController.clear();
+    _chassisNumberController.clear();
+    setState(() {
+      _vehicles = [];
+      _errorMessage = null;
+      _hasSearched = false;
+    });
+  }
 
-      try {
-        taxPaidDate = dateFormat.parse(taxPaidUpto);
-      } catch (e) {
-        // Try uppercase format
-        taxPaidDate = DateFormat('dd-MMM-yy').parseLoose(taxPaidUpto.toUpperCase());
+  // --------------------------------------------------------------
+  // GENERATE CHALLAN → FORM ID 10 + EXACT FEE TITLE
+  // --------------------------------------------------------------
+  Future<void> _generateChallan() async {
+    final reg = _registrationNumberController.text.trim();
+    final chassis = _chassisNumberController.text.trim();
+
+    if (reg.isEmpty && chassis.isEmpty) {
+      _showSnackBar("Enter registration or chassis number.", Colors.red);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Generate Challan"),
+        content: Text(
+          "No vehicle found.\nGenerate challan?\n\n"
+              "${reg.isNotEmpty ? 'Reg: $reg' : ''}\n"
+              "${chassis.isNotEmpty ? 'Chassis: $chassis' : ''}",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: widget.dynamicColor),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Proceed", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (!confirmed!) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await DynamicFormService.fetchDynamicForms();
+
+      if (response == null || !response.status || response.forms.isEmpty) {
+        _showSnackBar("Form not available. Try again.", Colors.red);
+        return;
       }
 
-      final DateTime now = DateTime.now();
+      // Step 1: Find Form ID 10
+      final challanForm = response.forms.firstWhere(
+            (f) => f.formId == _targetFormId,
+        orElse: () => throw Exception("Form ID $_targetFormId not found"),
+      );
 
-      // Calculate difference: taxPaidUpto - now
-      final int daysDifference = taxPaidDate.difference(now).inDays;
+      // Step 2: Find Exact Fee Title
+      final fee = challanForm.feeStructures.firstWhere(
+            (f) => f.title == _targetFeeTitle,
+        orElse: () => throw Exception("Fee '$_targetFeeTitle' not found"),
+      );
 
-      // Debug: Print to console
-      print('=== TAX COLOR DEBUG ===');
-      print('Original String: "$taxPaidUpto"');
-      print('Parsed Date: $taxPaidDate');
-      print('Today: $now');
-      print('Days Difference: $daysDifference');
-      print('Result: ${daysDifference >= -180 ? "GREEN" : "RED"}');
-      print('Check: $daysDifference >= -180 = ${daysDifference >= -180}');
-      print('======================');
+      // Step 3: Pre-fill registration & chassis
+      final Map<String, String> prefillData = {};
+      for (var attr in challanForm.attributes) {
+        final name = attr.attributeName.toLowerCase();
+        if (name.contains('registration') && reg.isNotEmpty) {
+          prefillData[attr.attributeName] = reg;
+        } else if (name.contains('chassis') && chassis.isNotEmpty) {
+          prefillData[attr.attributeName] = chassis;
+        }
+      }
 
-      // Logic:
-      // daysDifference >= 0: Tax valid (future/today) → GREEN
-      // daysDifference -1 to -180: Expired but within 6 months → GREEN
-      // daysDifference < -180: Expired over 6 months → RED
-      final Color result = daysDifference >= -180 ? Colors.green : Colors.red;
-      return result;
+      // Step 4: Navigate to Dynamic Form
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DynamicFormScreen(
+              formId: challanForm.formId,
+              feeStructureId: fee.feeStructureId,
+              formName: challanForm.formName,
+              amount: fee.amount,
+              formAttributes: challanForm.attributes,
+              feeTitle: fee.title ?? "Vehicle Challan",
+              urduTitle: fee.urduTitle,
+              // initialData: prefillData, // Uncomment after adding support
+            ),
+          ),
+        );
+      }
     } catch (e) {
-      print('Error parsing date: $e');
+      _showSnackBar("Challan form not found. Please try again.", Colors.red);
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // --------------------------------------------------------------
+  // TAX COLOR (FOR BORDER ONLY)
+  // --------------------------------------------------------------
+  Color _getTaxPaidUptoColor(String taxPaidUpto) {
+    if (taxPaidUpto.isEmpty) return Colors.red;
+    try {
+      final DateTime taxPaidDate = DateFormat('dd-MMM-yy').parseLoose(taxPaidUpto.toUpperCase());
+      final int daysDiff = taxPaidDate.difference(DateTime.now()).inDays;
+      return daysDiff >= -180 ? Colors.green : Colors.red;
+    } catch (e) {
       return Colors.red;
     }
+  }
+
+  // --------------------------------------------------------------
+  // SNACKBAR
+  // --------------------------------------------------------------
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color),
+    );
   }
 
   @override
@@ -139,25 +253,18 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Center(
-                        child: Text(
-                          'Vehicles',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
-                        ),
+                        child: Text('Vehicles',
+                            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black)),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Search registered vehicles here.',
-                        style: TextStyle(fontSize: 16, color: Colors.black),
-                      ),
+                      const Text('Search registered vehicles here.',
+                          style: TextStyle(fontSize: 16, color: Colors.black)),
                       const SizedBox(height: 32),
-                      const Text(
-                        'Registration Number:',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black),
-                      ),
+
+                      // Registration Number
+                      const Text('Registration Number:',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
+                      const SizedBox(height: 8),
                       TextField(
                         controller: _registrationNumberController,
                         focusNode: _registrationFocusNode,
@@ -184,37 +291,29 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                               ? Padding(
                             padding: const EdgeInsets.all(6.0),
                             child: Container(
-                              width: 40,
-                              height: 40,
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 color: widget.dynamicColor,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: IconButton(
-                                icon: const Icon(Icons.clear, color: Colors.white),
-                                onPressed: () {
-                                  _registrationNumberController.clear();
-                                  setState(() {
-                                    _vehicles = [];
-                                    _errorMessage = null;
-                                  });
-                                  _registrationFocusNode.unfocus();
-                                },
+                                icon: const Icon(Icons.clear, color: Colors.white, size: 18),
+                                onPressed: _clearSearch,
                               ),
                             ),
                           )
                               : null,
                         ),
-                        onSubmitted: (value) {
-                          _fetchVehicleStatus();
-                          _registrationFocusNode.unfocus();
-                        },
+                        onSubmitted: (_) => _fetchVehicleStatus(),
                       ),
+
                       const SizedBox(height: 16),
-                      const Text(
-                        'Chassis Number:',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black),
-                      ),
+
+                      // Chassis Number
+                      const Text('Chassis Number:',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
+                      const SizedBox(height: 8),
                       TextField(
                         controller: _chassisNumberController,
                         focusNode: _chassisFocusNode,
@@ -241,52 +340,59 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                               ? Padding(
                             padding: const EdgeInsets.all(6.0),
                             child: Container(
-                              width: 40,
-                              height: 40,
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 color: widget.dynamicColor,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: IconButton(
-                                icon: const Icon(Icons.clear, color: Colors.white),
-                                onPressed: () {
-                                  _chassisNumberController.clear();
-                                  setState(() {
-                                    _vehicles = [];
-                                    _errorMessage = null;
-                                  });
-                                  _chassisFocusNode.unfocus();
-                                },
+                                icon: const Icon(Icons.clear, color: Colors.white, size: 18),
+                                onPressed: _clearSearch,
                               ),
                             ),
                           )
                               : null,
                         ),
-                        onSubmitted: (value) {
-                          _fetchVehicleStatus();
-                          _chassisFocusNode.unfocus();
-                        },
+                        onSubmitted: (_) => _fetchVehicleStatus(),
                       ),
+
                       const SizedBox(height: 24),
-                      Center(
-                        child: ElevatedButton.icon(
-                          onPressed: _fetchVehicleStatus,
-                          icon: const Icon(Icons.search, color: Colors.white),
-                          label: const Text('Search', style: TextStyle(color: Colors.white)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: widget.dynamicColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+
+                      // SCAN ICON
+                      if (!_hasSearched)
+                        Center(
+                          child: IconButton(
+                            icon: Icon(Icons.qr_code_scanner, size: 48, color: widget.dynamicColor),
+                            tooltip: 'Scan Vehicle Document',
+                            onPressed: _scanAndFill,
+                          ),
+                        ),
+
+                      if (!_hasSearched) const SizedBox(height: 16),
+
+                      // SEARCH BUTTON
+                      if (!_hasSearched)
+                        Center(
+                          child: ElevatedButton.icon(
+                            onPressed: _fetchVehicleStatus,
+                            icon: const Icon(Icons.search, color: Colors.white),
+                            label: const Text('Search', style: TextStyle(color: Colors.white)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: widget.dynamicColor,
+                              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
+
+                      if (!_hasSearched) const SizedBox(height: 16),
+
+                      // LOADING
                       if (_isLoading)
-                        Center(
-                          child: CircularProgressIndicator(color: widget.dynamicColor),
-                        ),
+                        Center(child: CircularProgressIndicator(color: widget.dynamicColor)),
+
+                      // RESULTS - SHOW VEHICLES (NO CHALLAN BUTTON)
                       if (_vehicles.isNotEmpty)
                         ListView.builder(
                           shrinkWrap: true,
@@ -342,11 +448,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                         Text('District: ${vehicle.districtName}', style: const TextStyle(color: Colors.black)),
                                         Text(
                                           'Tax Paid Upto: ${vehicle.taxPaidUpto.isEmpty ? 'N/A' : vehicle.taxPaidUpto}',
-                                          style: TextStyle(
-                                            color: vehicle.taxPaidUpto.isEmpty
-                                                ? Colors.red
-                                                : _getTaxPaidUptoColor(vehicle.taxPaidUpto),
-                                          ),
+                                          style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
                                         ),
                                       ],
                                     ),
@@ -356,12 +458,38 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                             );
                           },
                         ),
-                      if (!_isLoading && _vehicles.isEmpty && _errorMessage == null)
-                        const Center(
-                          child: Text(
-                            'No vehicle data found. Please search.',
-                            style: TextStyle(color: Colors.black54),
+
+                      // NO VEHICLE FOUND → SHOW GENERATE CHALLAN
+                      if (!_isLoading && _vehicles.isEmpty && _hasSearched)
+                        Center(
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 16),
+                              const Text('No vehicle record found.',
+                                  style: TextStyle(color: Colors.black87, fontSize: 16, fontWeight: FontWeight.w500)),
+                              const SizedBox(height: 8),
+                              const Text('Want to generate a challan against this vehicle?',
+                                  style: TextStyle(color: Colors.black54, fontSize: 14), textAlign: TextAlign.center),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: _generateChallan,
+                                icon: const Icon(Icons.receipt_long, color: Colors.white),
+                                label: const Text('Generate Challan', style: TextStyle(color: Colors.white)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: widget.dynamicColor,
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                              ),
+                            ],
                           ),
+                        ),
+
+                      // BEFORE SEARCH
+                      if (!_isLoading && _vehicles.isEmpty && !_hasSearched)
+                        const Center(
+                          child: Text('No vehicle data found. Please search.',
+                              style: TextStyle(color: Colors.black54)),
                         ),
                     ],
                   ),
