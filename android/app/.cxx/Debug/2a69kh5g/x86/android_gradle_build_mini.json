@@ -1,0 +1,20 @@
+{
+  "buildFiles": [
+    "C:\\SOFTWARES\\FLUTTER\\packages\\flutter_tools\\gradle\\src\\main\\groovy\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\Arslan Wali\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\MY WORKS\\ONGOING PROJECTS\\SATA TECHNOLOGIES\\traffic Police\\android\\app\\.cxx\\Debug\\2a69kh5g\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\Arslan Wali\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\MY WORKS\\ONGOING PROJECTS\\SATA TECHNOLOGIES\\traffic Police\\android\\app\\.cxx\\Debug\\2a69kh5g\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {}
+}

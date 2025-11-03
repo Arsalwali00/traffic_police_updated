@@ -1,0 +1,2 @@
+C:/MY WORKS/ONGOING PROJECTS/SATA TECHNOLOGIES/traffic Police/android/app/.cxx/RelWithDebInfo/29342y5g/x86/CMakeFiles/edit_cache.dir
+C:/MY WORKS/ONGOING PROJECTS/SATA TECHNOLOGIES/traffic Police/android/app/.cxx/RelWithDebInfo/29342y5g/x86/CMakeFiles/rebuild_cache.dir
