@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:GBPayUsers/features/vehicles/model/vehicle_status_model.dart';
 import 'package:intl/intl.dart';
-import 'vehicle_report_screen.dart';
 
 class VehicleDetailScreen extends StatelessWidget {
   final VehicleStatusModel vehicle;
@@ -54,16 +53,6 @@ class VehicleDetailScreen extends StatelessWidget {
     }
   }
 
-  // Navigate to Report Screen
-  void _navigateToReportScreen(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const VehicleReportScreen(),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final bool isDefaulter = _isTaxDefaulter(vehicle.taxPaidUpto);
@@ -86,13 +75,6 @@ class VehicleDetailScreen extends StatelessWidget {
           ),
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.report_problem, color: dynamicColor),
-            tooltip: 'Report Vehicle',
-            onPressed: () => _navigateToReportScreen(context),
-          ),
-        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(

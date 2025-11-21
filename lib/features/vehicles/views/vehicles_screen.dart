@@ -3,10 +3,8 @@ import 'package:GBPayUsers/core/vehicle_status_service.dart';
 import 'package:GBPayUsers/features/vehicles/model/vehicle_status_model.dart';
 import 'vehicle_detail_screen.dart';
 import 'package:intl/intl.dart';
-import 'vehicle_doc_scanner.dart'; // Import the new scanner
-import 'package:GBPayUsers/core/dynamic_form_service.dart';
-import 'package:GBPayUsers/features/home/widgets/dynamic_form_screen.dart';
-import 'package:GBPayUsers/features/home/model/dynamic_form_model.dart';
+import 'vehicle_doc_scanner.dart';
+import 'challan_type_selection_screen.dart'; // Import the new screen
 
 class VehiclesScreen extends StatefulWidget {
   final Color dynamicColor;
@@ -29,10 +27,6 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
   final GBNumberPlateScanner _plateScanner = GBNumberPlateScanner();
 
-  // Target Form & Fee
-  static const int _targetFormId = 10;
-  static const String _targetFeeTitle = "C02638 Without Registration Other Than 2 Wheeler";
-
   @override
   void initState() {
     super.initState();
@@ -50,7 +44,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   }
 
   // --------------------------------------------------------------
-  // SCAN NUMBER PLATE (NEW)
+  // SCAN NUMBER PLATE
   // --------------------------------------------------------------
   Future<void> _scanPlate() async {
     try {
@@ -62,9 +56,6 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
       });
 
       _showSnackBar('Scanned: $result', Colors.green);
-
-      // Optionally auto-search after scanning
-      // await _fetchVehicleStatus();
     } catch (e) {
       _showSnackBar('Scan failed: $e', Colors.red);
     }
@@ -126,72 +117,19 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   }
 
   // --------------------------------------------------------------
-  // GENERATE CHALLAN → FORM ID 10 + EXACT FEE TITLE (NO DIALOG)
+  // SHOW CHALLAN TYPE SELECTION SCREEN
   // --------------------------------------------------------------
-  Future<void> _generateChallan() async {
-    final reg = _registrationNumberController.text.trim();
-    final chassis = _chassisNumberController.text.trim();
-
-    if (reg.isEmpty && chassis.isEmpty) {
-      _showSnackBar("Enter registration or chassis number.", Colors.red);
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final response = await DynamicFormService.fetchDynamicForms();
-
-      if (response == null || !response.status || response.forms.isEmpty) {
-        _showSnackBar("Form not available. Try again.", Colors.red);
-        return;
-      }
-
-      // Step 1: Find Form ID 10
-      final challanForm = response.forms.firstWhere(
-            (f) => f.formId == _targetFormId,
-        orElse: () => throw Exception("Form ID $_targetFormId not found"),
-      );
-
-      // Step 2: Find Exact Fee Title
-      final fee = challanForm.feeStructures.firstWhere(
-            (f) => f.title == _targetFeeTitle,
-        orElse: () => throw Exception("Fee '$_targetFeeTitle' not found"),
-      );
-
-      // Step 3: Pre-fill registration & chassis
-      final Map<String, String> prefillData = {};
-      for (var attr in challanForm.attributes) {
-        final name = attr.attributeName.toLowerCase();
-        if (name.contains('registration') && reg.isNotEmpty) {
-          prefillData[attr.attributeName] = reg;
-        } else if (name.contains('chassis') && chassis.isNotEmpty) {
-          prefillData[attr.attributeName] = chassis;
-        }
-      }
-
-      // Step 4: Navigate to Dynamic Form
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DynamicFormScreen(
-              formId: challanForm.formId,
-              feeStructureId: fee.feeStructureId,
-              formName: challanForm.formName,
-              amount: fee.amount,
-              formAttributes: challanForm.attributes,
-              feeTitle: fee.title ?? "Vehicle Challan",
-              urduTitle: fee.urduTitle,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      _showSnackBar("Challan form not found. Please try again.", Colors.red);
-    } finally {
-      setState(() => _isLoading = false);
-    }
+  void _showChallanSelectionScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChallanTypeSelectionScreen(
+          dynamicColor: widget.dynamicColor,
+          registrationNumber: _registrationNumberController.text.trim(),
+          chassisNumber: _chassisNumberController.text.trim(),
+        ),
+      ),
+    );
   }
 
   // --------------------------------------------------------------
@@ -338,7 +276,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                       const SizedBox(height: 24),
 
-                      // SCAN NUMBER PLATE BUTTON (UPDATED)
+                      // SCAN NUMBER PLATE BUTTON
                       if (!_hasSearched)
                         Center(
                           child: Column(
@@ -460,7 +398,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                   style: TextStyle(color: Colors.black54, fontSize: 14), textAlign: TextAlign.center),
                               const SizedBox(height: 16),
                               ElevatedButton.icon(
-                                onPressed: _generateChallan,
+                                onPressed: _showChallanSelectionScreen,
                                 icon: const Icon(Icons.receipt_long, color: Colors.white),
                                 label: const Text('Generate Challan', style: TextStyle(color: Colors.white)),
                                 style: ElevatedButton.styleFrom(
