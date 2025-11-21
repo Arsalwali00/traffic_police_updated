@@ -3,7 +3,7 @@ import 'package:GBPayUsers/core/vehicle_status_service.dart';
 import 'package:GBPayUsers/features/vehicles/model/vehicle_status_model.dart';
 import 'vehicle_detail_screen.dart';
 import 'package:intl/intl.dart';
-import 'vehicle_doc_scanner.dart';
+import 'vehicle_doc_scanner.dart'; // Import the new scanner
 import 'package:GBPayUsers/core/dynamic_form_service.dart';
 import 'package:GBPayUsers/features/home/widgets/dynamic_form_screen.dart';
 import 'package:GBPayUsers/features/home/model/dynamic_form_model.dart';
@@ -27,7 +27,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   List<VehicleStatusModel> _vehicles = [];
   String? _errorMessage;
 
-  final VehicleDocScanner _scanner = VehicleDocScanner();
+  final GBNumberPlateScanner _plateScanner = GBNumberPlateScanner();
 
   // Target Form & Fee
   static const int _targetFormId = 10;
@@ -50,19 +50,21 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   }
 
   // --------------------------------------------------------------
-  // SCAN & AUTO-FILL
+  // SCAN NUMBER PLATE (NEW)
   // --------------------------------------------------------------
-  Future<void> _scanAndFill() async {
+  Future<void> _scanPlate() async {
     try {
-      final result = await _scanner.scanVehicleDoc(context);
+      final result = await _plateScanner.scanNumberPlate(context);
       if (result == null) return;
 
       setState(() {
-        _registrationNumberController.text = result['registration_number'] ?? '';
-        _chassisNumberController.text = result['chassis_number'] ?? '';
+        _registrationNumberController.text = result;
       });
 
-      await _fetchVehicleStatus();
+      _showSnackBar('Scanned: $result', Colors.green);
+
+      // Optionally auto-search after scanning
+      // await _fetchVehicleStatus();
     } catch (e) {
       _showSnackBar('Scan failed: $e', Colors.red);
     }
@@ -124,7 +126,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
   }
 
   // --------------------------------------------------------------
-  // GENERATE CHALLAN → FORM ID 10 + EXACT FEE TITLE
+  // GENERATE CHALLAN → FORM ID 10 + EXACT FEE TITLE (NO DIALOG)
   // --------------------------------------------------------------
   Future<void> _generateChallan() async {
     final reg = _registrationNumberController.text.trim();
@@ -134,28 +136,6 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
       _showSnackBar("Enter registration or chassis number.", Colors.red);
       return;
     }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Generate Challan"),
-        content: Text(
-          "No vehicle found.\nGenerate challan?\n\n"
-              "${reg.isNotEmpty ? 'Reg: $reg' : ''}\n"
-              "${chassis.isNotEmpty ? 'Chassis: $chassis' : ''}",
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: widget.dynamicColor),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Proceed", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (!confirmed!) return;
 
     setState(() => _isLoading = true);
 
@@ -203,7 +183,6 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
               formAttributes: challanForm.attributes,
               feeTitle: fee.title ?? "Vehicle Challan",
               urduTitle: fee.urduTitle,
-              // initialData: prefillData, // Uncomment after adding support
             ),
           ),
         );
@@ -272,7 +251,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: Colors.white,
-                          hintText: 'Enter registration number',
+                          hintText: 'Enter registration number (e.g., ABC-12-345)',
                           hintStyle: const TextStyle(color: Colors.black38),
                           contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                           border: OutlineInputBorder(
@@ -359,13 +338,22 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                       const SizedBox(height: 24),
 
-                      // SCAN ICON
+                      // SCAN NUMBER PLATE BUTTON (UPDATED)
                       if (!_hasSearched)
                         Center(
-                          child: IconButton(
-                            icon: Icon(Icons.qr_code_scanner, size: 48, color: widget.dynamicColor),
-                            tooltip: 'Scan Vehicle Document',
-                            onPressed: _scanAndFill,
+                          child: Column(
+                            children: [
+                              IconButton(
+                                icon: Icon(Icons.qr_code_scanner, size: 48, color: widget.dynamicColor),
+                                tooltip: 'Scan Number Plate',
+                                onPressed: _scanPlate,
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Tap to scan number plate',
+                                style: TextStyle(color: Colors.black54, fontSize: 12),
+                              ),
+                            ],
                           ),
                         ),
 
@@ -392,7 +380,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                       if (_isLoading)
                         Center(child: CircularProgressIndicator(color: widget.dynamicColor)),
 
-                      // RESULTS - SHOW VEHICLES (NO CHALLAN BUTTON)
+                      // RESULTS - SHOW VEHICLES
                       if (_vehicles.isNotEmpty)
                         ListView.builder(
                           shrinkWrap: true,
